@@ -88,4 +88,4 @@ python -u train.py --dataroot /path/data --batch_size 2 --num_domains 5 \
 - The model is saved to `--result_dir` at intervals specified by `--model_save_freq`.
 - Use `--num_domains` to select the number of training scanner.
 
-Our work benefit from [`DISARM_Harmonization`](https://github.com/luca2245/DISARM_Harmonization.git) and [`MDMM`](https://github.com/HsinYingLee/DRIT.git)
+Our work benefit from [DISARM_Harmonization](https://github.com/luca2245/DISARM_Harmonization.git) and [DRIT](https://github.com/HsinYingLee/DRIT.git)
