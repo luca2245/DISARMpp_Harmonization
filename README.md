@@ -24,7 +24,7 @@ Preprocessing is required for both inference and training. The pipeline includes
 2. **Bias field correction** using [`FAST`](https://fsl.fmrib.ox.ac.uk/fsl/docs/#/structural/fast)
 3. **Registration to MNI152-T1-1mm** using [`FLIRT`](https://fsl.fmrib.ox.ac.uk/fsl/docs/#/)
 
-To automate these preprocessing steps, utilize the provided `mri_prep.sh` script. 
+To automate these preprocessing steps, utilize the provided `mri_prep.sh` script inside the `preprocessing` folder. 
 Run the script using:
 
 ```
@@ -54,7 +54,7 @@ python -u inference.py --input_dir /path/folder --output_dir /path/folder \
 - `input_dir` → Path to the folder containing the input .nii.gz MRI scans to be harmonized.
 - `output_dir` → Path to the folder where harmonized images will be saved. Output files will retain their original filenames, prefixed with `harm_`
 - `mode` → Harmonization mode. Choose between `scanner-free` or `reference`
-- `pre_trained_model` → Flag to indicate usage of a pre-trained model.
+- `pre_trained_model` → Flag to indicate usage of a pre-trained model. The pre-trained model is provided inside the `checkpoint` folder
 
 ### Self-trained model
 
@@ -87,3 +87,5 @@ python -u train.py --dataroot /path/data --batch_size 2 --num_domains 5 \
 - The image slices in the three dimensions (sagittal, axial, and coronal) from all reconstructions performed by the model during training are saved to `--result_dir` at intervals defined by `--img_save_freq`. 
 - The model is saved to `--result_dir` at intervals specified by `--model_save_freq`.
 - Use `--num_domains` to select the number of training scanner.
+
+Our work benefit from [`DISARM_Harmonization`](https://github.com/luca2245/DISARM_Harmonization.git) and [`MDMM`](https://github.com/HsinYingLee/DRIT.git)
