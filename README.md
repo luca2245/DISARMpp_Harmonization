@@ -14,7 +14,7 @@ Clone the repository:
 
 ```
 git clone https://github.com/luca2245/DISARMpp_Harmonization.git
-cd DISARMpp_Harmonization/Code
+cd DISARMpp_Harmonization/code
 ```
 
 ## MRI Preprocessing

@@ -4,8 +4,6 @@ import numpy as np
 import argparse
 from torch.optim import lr_scheduler
 from torch.autograd import Variable
-import seaborn as sns
-import pandas as pd
 import matplotlib.colors as mcolors
 import torch.nn as nn
 from tqdm import tqdm
@@ -338,19 +336,6 @@ def transfer_img_list_to_scannerfree(img_list, z_rand, opts, model):
         output = recompose_image_to_scannerfree(img_, opts, model,  z_rand, subset_size=26, moving_window = 1)
         list_new.append(output)
     return list_new
-
-
-def get_mean_distr(img_list):
-    img_mean = torch.mean(torch.cat(img_list, dim=0), dim=0)
-    vector_mean = tensor2img(img_mean).flatten()
-    return img_mean, vector_mean
-
-def get_avg_pool_mean_distr(img_list):
-    avg_pool = nn.AvgPool3d(kernel_size = 37, stride=37)
-    img_list = [avg_pool(img) for img in img_list]
-    img_mean = torch.mean(torch.cat(img_list, dim=0), dim=0)
-    vector_mean = tensor2img(img_mean).flatten()
-    return img_mean, vector_mean
 
 
 # Function to load .nii.gz images and return both images and filenames
