@@ -1,6 +1,7 @@
 import nibabel as nib
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 import argparse
 from torch.optim import lr_scheduler
 from torch.autograd import Variable
@@ -129,234 +130,216 @@ class Saver():
 
 # ### Utils for testing phase
 
+def get_model_device(model):
+    return next(model.parameters()).device
+
+
 def get_z_random(batchSize, nz, random_type='gauss'):
-    z = torch.randn(batchSize, nz)
-    return z
+    return torch.randn(batchSize, nz)
+
 
 def transfer_to_scannerfree(source_img, opts, model):
-        z_random = get_z_random(source_img.size(0), 16, 'gauss').cuda().float()
-        source_img_ = source_img.cuda().float()
-        with torch.no_grad():
-            output_test = model.test_scannerfree_transfer(source_img_, z_random)
-        return output_test[0,0]
+    device = get_model_device(model)
+    source_img_ = source_img.to(device=device, dtype=torch.float32)
+    z_random = get_z_random(source_img.size(0), 16, 'gauss').to(device)
+    with torch.no_grad():
+        output_test = model.test_scannerfree_transfer(source_img_, z_random)
+    return output_test[0, 0]
 
 
-def recompose_image_to_reference(image, ref_scanner, opts, model, subset_size=26, moving_window = 1):
-    # Ensure the image is a torch tensor
+def recompose_image_to_reference(image, ref_scanner, opts, model, subset_size=26, moving_window=1):
     if not isinstance(image, torch.Tensor):
         raise TypeError("Input image must be a torch tensor.")
-    
-    # Image dimensions
+
+    device = get_model_device(model)
+    image = image.to(device=device, dtype=torch.float32)
     d, h, w = image.shape
-    
-    # Initialize an empty tensor to hold the recomposed image
-    recomposed_image = torch.zeros((d, h, w), dtype=image.dtype, device=image.device)
-    # Initialize a counter tensor to keep track of the number of additions for averaging
-    count = torch.zeros((d, h, w), dtype=torch.float32, device=image.device)
-    
+
+    recomposed_image = torch.zeros((d, h, w), dtype=image.dtype, device=device)
+    count = torch.zeros((d, h, w), dtype=torch.float32, device=device)
+
     dataset_dom = data_single_std(opts, ref_scanner)
-    dataloader_dom = torch.utils.data.DataLoader(dataset_dom, batch_size=1, shuffle=True, num_workers=6)
+    dataloader_dom = torch.utils.data.DataLoader(
+        dataset_dom, batch_size=1, shuffle=True, num_workers=6
+    )
     for batch in dataloader_dom:
-            img, lab = batch
+        img, lab = batch
 
-    # Slide the subset across the first dimension
+    img = img.to(device=device, dtype=torch.float32)
+    lab = lab.to(device=device, dtype=torch.float32)
+
     start = 0
     while start + subset_size <= d:
         end = start + subset_size
-        
-        # Extract the subset from the original image
         subset_image = image[start:end].unsqueeze(0).unsqueeze(0)
-        img_ = img[:, :, start:end, :, :].cuda().float()
-        lab_ = lab.cuda().float()
-        subset_image_ = subset_image.cuda().float()
+        img_ = img[:, :, start:end, :, :]
+
         with torch.no_grad():
-               gen_subset_image = model.test_reference_transfer(image = subset_image_, image_trg = img_, c_trg = lab_)
-                
-        # Update the recomposed image and count tensors
-        recomposed_image[start:end] += gen_subset_image[0,0]
+            gen_subset_image = model.test_reference_transfer(
+                image=subset_image, image_trg=img_, c_trg=lab
+            )
+
+        recomposed_image[start:end] += gen_subset_image[0, 0]
         count[start:end] += 1
-        
-        # Move the window one index ahead
         start += moving_window
-    
-    # Avoid division by zero and compute the average
-    # Replace zero counts with one to avoid division errors
-    count = torch.where(count == 0, torch.tensor(1.0, device=image.device), count)
-    recomposed_image /= count
-    
-    return recomposed_image
+
+    count = torch.where(count == 0, torch.ones_like(count), count)
+    return recomposed_image / count
 
 
-def base_recompose_image_to_reference(image, ref_img, ref_lab, opts, model, subset_size=26, moving_window = 1):
-    # Ensure the image is a torch tensor
+def base_recompose_image_to_reference(image, ref_img, ref_lab, opts, model, subset_size=26, moving_window=1):
     if not isinstance(image, torch.Tensor):
         raise TypeError("Input image must be a torch tensor.")
-    
-    # Image dimensions
-    d, h, w = image.shape
-    
-    # Initialize an empty tensor to hold the recomposed image
-    recomposed_image = torch.zeros((d, h, w), dtype=image.dtype, device=image.device)
-    # Initialize a counter tensor to keep track of the number of additions for averaging
-    count = torch.zeros((d, h, w), dtype=torch.float32, device=image.device)
 
-    # Slide the subset across the first dimension
+    device = get_model_device(model)
+    image = image.to(device=device, dtype=torch.float32)
+    ref_img = ref_img.to(device=device, dtype=torch.float32)
+    ref_lab = ref_lab.to(device=device, dtype=torch.float32)
+    d, h, w = image.shape
+
+    recomposed_image = torch.zeros((d, h, w), dtype=image.dtype, device=device)
+    count = torch.zeros((d, h, w), dtype=torch.float32, device=device)
+
     start = 0
     while start + subset_size <= d:
         end = start + subset_size
-        
-        # Extract the subset from the original image
         subset_image = image[start:end].unsqueeze(0).unsqueeze(0)
-        img_ = ref_img[:, :, start:end, :, :].cuda().float()
-        lab_ = ref_lab.cuda().float()
-        subset_image_ = subset_image.cuda().float()
+        img_ = ref_img[:, :, start:end, :, :]
+
         with torch.no_grad():
-               gen_subset_image = model.test_reference_transfer(image = subset_image_, image_trg = img_, c_trg = lab_)
-                
-        # Update the recomposed image and count tensors
-        recomposed_image[start:end] += gen_subset_image[0,0]
+            gen_subset_image = model.test_reference_transfer(
+                image=subset_image, image_trg=img_, c_trg=ref_lab
+            )
+
+        recomposed_image[start:end] += gen_subset_image[0, 0]
         count[start:end] += 1
-        
-        # Move the window one index ahead
         start += moving_window
-    
-    # Avoid division by zero and compute the average
-    # Replace zero counts with one to avoid division errors
-    count = torch.where(count == 0, torch.tensor(1.0, device=image.device), count)
-    recomposed_image /= count
-    
-    return recomposed_image
+
+    count = torch.where(count == 0, torch.ones_like(count), count)
+    return recomposed_image / count
 
 
 def custom_transform(x):
     return x.unsqueeze(0)
 
+
 def custom_permute(x):
     return x.permute(0, 2, 3, 1)
 
+
 def transfer_img_list_to_reference(img_list, ref_scanner, opts, model):
     list_new = []
-    
-    transforms = [ToTensor()]
-    transforms.append(custom_transform)
-    transforms.append(custom_permute)
-    transforms.append(tio.RescaleIntensity((-1, 1)))
-    transforms = Compose(transforms)
-    
+    device = get_model_device(model)
+
+    transforms = Compose([
+        ToTensor(),
+        custom_transform,
+        custom_permute,
+        tio.RescaleIntensity((-1, 1)),
+    ])
+
     img_list = [transforms(img).unsqueeze(0) for img in img_list]
     dataset_dom = data_single_std(opts, ref_scanner)
-    dataloader_dom = torch.utils.data.DataLoader(dataset_dom, batch_size=1, shuffle=True, num_workers=8)
+    dataloader_dom = torch.utils.data.DataLoader(
+        dataset_dom, batch_size=1, shuffle=True, num_workers=8
+    )
     for batch in dataloader_dom:
-            ref_img, ref_lab = batch
-    
+        ref_img, ref_lab = batch
+
     for i in tqdm(range(len(img_list)), desc="Harmonizing images to reference scanner"):
-        img_ = img_list[i][0,0].cuda().float()
-        output = base_recompose_image_to_reference(img_, ref_img, ref_lab, opts, model, subset_size=26, moving_window = 1)
+        img_ = img_list[i][0, 0].to(device=device, dtype=torch.float32)
+        output = base_recompose_image_to_reference(
+            img_, ref_img, ref_lab, opts, model, subset_size=26, moving_window=1
+        )
         list_new.append(output)
     return list_new
+
 
 def transfer_img_list_to_reference2(img_list, ref_img, ref_scanner, opts, model):
     list_new = []
-    
-    transforms = [ToTensor()]
-    transforms.append(custom_transform)
-    transforms.append(custom_permute)
-    transforms.append(tio.RescaleIntensity((-1, 1)))
-    transforms = Compose(transforms)
-    
+    device = get_model_device(model)
+
+    transforms = Compose([
+        ToTensor(),
+        custom_transform,
+        custom_permute,
+        tio.RescaleIntensity((-1, 1)),
+    ])
+
     img_list = [transforms(img).unsqueeze(0) for img in img_list]
-    ref_img = transforms(ref_img).unsqueeze(0)
-    ref_lab = np.zeros((1, opts.num_domains), dtype=float)
+    ref_img = transforms(ref_img).unsqueeze(0).to(device=device, dtype=torch.float32)
+    ref_lab = torch.zeros((1, opts.num_domains), dtype=torch.float32, device=device)
     ref_lab[0, ref_scanner] = 1.0
-    
+
     for i in tqdm(range(len(img_list)), desc="Harmonizing images to reference scanner"):
-        img_ = img_list[i][0,0].cuda().float()
-        ref_img_ = ref_img.cuda().float()
-        ref_lab_ = torch.from_numpy(ref_lab).cuda().float()
-        output = base_recompose_image_to_reference(img_, ref_img_, ref_lab_, opts, model, subset_size=26, moving_window = 1)
+        img_ = img_list[i][0, 0].to(device=device, dtype=torch.float32)
+        output = base_recompose_image_to_reference(
+            img_, ref_img, ref_lab, opts, model, subset_size=26, moving_window=1
+        )
         list_new.append(output)
     return list_new
 
 
-def recompose_image_to_scannerfree(image, opts, model,  z_rand, subset_size=26, moving_window = 1):
-    # Ensure the image is a torch tensor
+def recompose_image_to_scannerfree(image, opts, model, z_rand, subset_size=26, moving_window=1):
     if not isinstance(image, torch.Tensor):
         raise TypeError("Input image must be a torch tensor.")
-    
-    # Image dimensions
-    d, h, w = image.shape
-    
-    # Initialize an empty tensor to hold the recomposed image
-    recomposed_image = torch.zeros((d, h, w), dtype=image.dtype, device=image.device)
-    # Initialize a counter tensor to keep track of the number of additions for averaging
-    count = torch.zeros((d, h, w), dtype=torch.float32, device=image.device)
-    
-    z_random = z_rand.cuda().float()
 
-    # Slide the subset across the first dimension
+    device = get_model_device(model)
+    image = image.to(device=device, dtype=torch.float32)
+    z_random = z_rand.to(device=device, dtype=torch.float32)
+    d, h, w = image.shape
+
+    recomposed_image = torch.zeros((d, h, w), dtype=image.dtype, device=device)
+    count = torch.zeros((d, h, w), dtype=torch.float32, device=device)
+
     start = 0
     while start + subset_size <= d:
         end = start + subset_size
-        
-        # Extract the subset from the original image
         subset_image = image[start:end].unsqueeze(0).unsqueeze(0)
-        subset_image_ = subset_image.cuda().float()
-                
+
         with torch.no_grad():
-            gen_subset_image = model.test_scannerfree_transfer(subset_image_ , z_random)
-                
-        # Update the recomposed image and count tensors
-        recomposed_image[start:end] += gen_subset_image[0,0]
+            gen_subset_image = model.test_scannerfree_transfer(subset_image, z_random)
+
+        recomposed_image[start:end] += gen_subset_image[0, 0]
         count[start:end] += 1
-        
-        # Move the window one index ahead
         start += moving_window
-    
-    # Avoid division by zero and compute the average
-    # Replace zero counts with one to avoid division errors
-    count = torch.where(count == 0, torch.tensor(1.0, device=image.device), count)
-    recomposed_image /= count
-    
-    return recomposed_image
+
+    count = torch.where(count == 0, torch.ones_like(count), count)
+    return recomposed_image / count
 
 
 def transfer_img_list_to_scannerfree(img_list, z_rand, opts, model):
     list_new = []
-    
-    transforms = [ToTensor()]
-    transforms.append(custom_transform)
-    transforms.append(custom_permute)
-    transforms.append(tio.RescaleIntensity((-1, 1)))
-    transforms = Compose(transforms)
-    
+    device = get_model_device(model)
+
+    transforms = Compose([
+        ToTensor(),
+        custom_transform,
+        custom_permute,
+        tio.RescaleIntensity((-1, 1)),
+    ])
     img_list = [transforms(img).unsqueeze(0) for img in img_list]
-    
+
     for i in tqdm(range(len(img_list)), desc="Harmonizing images to scanner-free"):
-        img_ = img_list[i][0,0].cuda().float()
-        output = recompose_image_to_scannerfree(img_, opts, model,  z_rand, subset_size=26, moving_window = 1)
+        img_ = img_list[i][0, 0].to(device=device, dtype=torch.float32)
+        output = recompose_image_to_scannerfree(
+            img_, opts, model, z_rand, subset_size=26, moving_window=1
+        )
         list_new.append(output)
     return list_new
 
 
-# Function to load .nii.gz images and return both images and filenames
 def load_nifti_images_from_folder(folder_path):
-    nifti_images = []  # List to store the numpy arrays
-    filenames = []  # List to store filenames
-    
-    for filename in os.listdir(folder_path):
+    nifti_images = []
+    filenames = []
+
+    for filename in sorted(os.listdir(folder_path)):
         if filename.endswith(".nii.gz"):
-            # Construct the full file path
             file_path = os.path.join(folder_path, filename)
-            
-            # Load the NIfTI file
             img = nib.load(file_path)
-            
-            # Convert the NIfTI image to a numpy array
             nifti_images.append(img.get_fdata())
-            
-            # Append the filename (without the directory path) to the filenames list
             filenames.append(filename)
-    
+
     return nifti_images, filenames
 
 # Save harmonized volumes in the same voxel space as their respective inputs.

@@ -12,9 +12,13 @@ class DISARM(nn.Module):
   def __init__(self, opts):
     super(DISARM, self).__init__()
     self.opts = opts
-    lr = 0.0001
-    lr_dcontent = lr/2.5
-    self.nz = 16
+    lr = getattr(opts, 'lr', 1e-4)
+    lr_dcontent = getattr(opts, 'lr_dcontent', 4e-5)
+    beta1 = getattr(opts, 'beta1', 0.5)
+    beta2 = getattr(opts, 'beta2', 0.999)
+    weight_decay = getattr(opts, 'weight_decay', 1e-4)
+    self.grad_clip = getattr(opts, 'grad_clip', 1.0)
+    self.nz = getattr(opts, 'nz', 16)
 
     self.dis1 = Scanner_Discriminator(opts.input_dim, norm=opts.dis_norm, sn=opts.dis_spectral_norm,  
                                       c_dim=opts.num_domains)
@@ -26,14 +30,15 @@ class DISARM(nn.Module):
           norm_layer=None, nl_layer=get_non_linearity(layer_type='lrelu'))
     self.gen = Generator(opts.input_dim, c_dim=opts.num_domains, nz=self.nz)
 
-    self.dis1_opt = torch.optim.Adam(self.dis1.parameters(), lr=lr, betas=(0.5, 0.999), weight_decay=0.0001)
-    self.dis2_opt = torch.optim.Adam(self.dis2.parameters(), lr=lr, betas=(0.5, 0.999), weight_decay=0.0001)
-    self.enc_c_opt = torch.optim.Adam(self.enc_c.parameters(), lr=lr, betas=(0.5, 0.999), weight_decay=0.0001)
-    self.enc_a_opt = torch.optim.Adam(self.enc_a.parameters(), lr=lr, betas=(0.5, 0.999), weight_decay=0.0001)
-    self.gen_opt = torch.optim.Adam(self.gen.parameters(), lr=lr, betas=(0.5, 0.999), weight_decay=0.0001)
+    adam_args = dict(betas=(beta1, beta2), weight_decay=weight_decay)
+    self.dis1_opt = torch.optim.Adam(self.dis1.parameters(), lr=lr, **adam_args)
+    self.dis2_opt = torch.optim.Adam(self.dis2.parameters(), lr=lr, **adam_args)
+    self.enc_c_opt = torch.optim.Adam(self.enc_c.parameters(), lr=lr, **adam_args)
+    self.enc_a_opt = torch.optim.Adam(self.enc_a.parameters(), lr=lr, **adam_args)
+    self.gen_opt = torch.optim.Adam(self.gen.parameters(), lr=lr, **adam_args)
     
     self.disContent = Anatomy_Discriminator(c_dim=opts.num_domains)
-    self.disContent_opt = torch.optim.Adam(self.disContent.parameters(), lr=lr_dcontent, betas=(0.5, 0.999), weight_decay=0.0001)
+    self.disContent_opt = torch.optim.Adam(self.disContent.parameters(), lr=lr_dcontent, **adam_args)
 
     self.cls_loss = nn.BCEWithLogitsLoss()
 
@@ -63,16 +68,16 @@ class DISARM(nn.Module):
 
   def setgpu(self, gpu):
     self.gpu = gpu
-    self.dis1.cuda(self.gpu)
-    self.dis2.cuda(self.gpu)
-    self.enc_c.cuda(self.gpu)
-    self.enc_a.cuda(self.gpu)
-    self.gen.cuda(self.gpu)
-    self.disContent.cuda(self.gpu)
+    self.device = torch.device('cuda:%d' % gpu)
+    self.dis1.to(self.device)
+    self.dis2.to(self.device)
+    self.enc_c.to(self.device)
+    self.enc_a.to(self.device)
+    self.gen.to(self.device)
+    self.disContent.to(self.device)
 
   def get_z_random(self, batchSize, nz, random_type='gauss'):
-    z = torch.randn(batchSize, nz).cuda(self.gpu)
-    return z
+    return torch.randn(batchSize, nz, device=self.device)
 
   def test_reference_transfer(self, image, image_trg, c_trg):
     self.z_content = self.enc_c.forward(image)
@@ -85,8 +90,11 @@ class DISARM(nn.Module):
 
   def test_scannerfree_transfer(self, image, z_random):
     self.z_content = self.enc_c.forward(image)
-    c_trg = np.zeros((image.size(0),self.opts.num_domains))
-    c_trg = torch.FloatTensor(c_trg).cuda()
+    c_trg = torch.zeros(
+        image.size(0), self.opts.num_domains,
+        dtype=image.dtype, device=image.device
+    )
+    z_random = z_random.to(device=image.device, dtype=image.dtype)
     output = self.gen.forward(self.z_content, z_random, c_trg)
     return output
 
@@ -153,7 +161,7 @@ class DISARM(nn.Module):
     self.mu2_a, self.mu2_b = torch.split(self.mu2, half_size, 0)
     
     # For Scanner-Free space Loss
-    self.free_attr = torch.zeros(1,self.opts.num_domains).cuda(self.gpu)
+    self.free_attr = torch.zeros(half_size, self.opts.num_domains, device=self.device)
     self.fake_A_free = self.gen.forward(self.z_content_a, self.z_random, self.free_attr)
     self.fake_B_free = self.gen.forward(self.z_content_b, self.z_random, self.free_attr)
 
@@ -173,10 +181,10 @@ class DISARM(nn.Module):
     self.z_content = self.enc_c.forward(self.input)
     self.disContent_opt.zero_grad()
     pred_cls = self.disContent.forward(self.z_content.detach())
-    loss_D_content = self.cls_loss(pred_cls, c_org)
+    loss_D_content = self.cls_loss(pred_cls, c_org) * self.opts.lambda_adv_b
     loss_D_content.backward()
     self.disContent_loss = loss_D_content.item()
-    nn.utils.clip_grad_norm_(self.disContent.parameters(), 1.0)
+    nn.utils.clip_grad_norm_(self.disContent.parameters(), self.grad_clip)
     self.disContent_opt.step()
 
   def update_D(self, image, c_org):
@@ -186,12 +194,12 @@ class DISARM(nn.Module):
 
     self.dis1_opt.zero_grad()
     self.D1_gan_loss, self.D1_cls_loss = self.backward_D(self.dis1, self.input, self.fake_encoded_img)
-    nn.utils.clip_grad_norm_(self.dis1.parameters(), 1.0)
+    nn.utils.clip_grad_norm_(self.dis1.parameters(), self.grad_clip)
     self.dis1_opt.step()
 
     self.dis2_opt.zero_grad()
     self.D2_gan_loss, self.D2_cls_loss = self.backward_D(self.dis2, self.input, self.fake_random_img)
-    nn.utils.clip_grad_norm_(self.dis2.parameters(), 1.0)
+    nn.utils.clip_grad_norm_(self.dis2.parameters(), self.grad_clip)
     self.dis2_opt.step()
 
   def backward_D(self, netD, real, fake):
@@ -201,14 +209,14 @@ class DISARM(nn.Module):
     for it, (out_a, out_b) in enumerate(zip(pred_fake, pred_real)):
         out_fake = nn.functional.sigmoid(out_a)
         out_real = nn.functional.sigmoid(out_b)
-        all0 = torch.zeros_like(out_fake).cuda(self.gpu)
-        all1 = torch.ones_like(out_real).cuda(self.gpu)
+        all0 = torch.zeros_like(out_fake)
+        all1 = torch.ones_like(out_real)
         ad_fake_loss = nn.functional.binary_cross_entropy(out_fake, all0)
         ad_true_loss = nn.functional.binary_cross_entropy(out_real, all1)
         loss_D_gan += ad_true_loss + ad_fake_loss
 
     loss_D_cls = self.cls_loss(pred_real_cls, self.c_org)
-    loss_D = loss_D_gan + self.opts.lambda_cls * loss_D_cls
+    loss_D = self.opts.lambda_adv_s * loss_D_gan + self.opts.lambda_cls_D * loss_D_cls
     loss_D.backward()
     return loss_D_gan, loss_D_cls
 
@@ -218,9 +226,9 @@ class DISARM(nn.Module):
     self.enc_a_opt.zero_grad()
     self.gen_opt.zero_grad()
     self.backward_EG()
-    nn.utils.clip_grad_norm_(self.enc_c.parameters(), 1.0)
-    nn.utils.clip_grad_norm_(self.enc_a.parameters(), 1.0)
-    nn.utils.clip_grad_norm_(self.gen.parameters(), 1.0)
+    nn.utils.clip_grad_norm_(self.enc_c.parameters(), self.grad_clip)
+    nn.utils.clip_grad_norm_(self.enc_a.parameters(), self.grad_clip)
+    nn.utils.clip_grad_norm_(self.gen.parameters(), self.grad_clip)
     self.enc_c_opt.step()
     self.enc_a_opt.step()
     self.gen_opt.step()
@@ -229,34 +237,35 @@ class DISARM(nn.Module):
     self.gen_opt.zero_grad()
     self.forward() # call forward() to using new network parameters to compute variables
     self.backward_G_alone()
-    nn.utils.clip_grad_norm_(self.enc_c.parameters(), 1.0)
-    nn.utils.clip_grad_norm_(self.gen.parameters(), 1.0)
+    nn.utils.clip_grad_norm_(self.enc_c.parameters(), self.grad_clip)
+    nn.utils.clip_grad_norm_(self.gen.parameters(), self.grad_clip)
     self.enc_c_opt.step()
     self.gen_opt.step()
 
   def backward_EG(self):
     # Adversarial loss for generator
-    loss_G_GAN_content = self.backward_G_GAN_content(self.z_content)
+    loss_G_GAN_content = self.backward_G_GAN_content(self.z_content) * self.opts.lambda_adv_b
 
     # Ladv for generator
     pred_fake, pred_fake_cls = self.dis1.forward(self.fake_encoded_img)
     loss_G_GAN = 0
     for out_a in pred_fake:
         outputs_fake = nn.functional.sigmoid(out_a)
-        all_ones = torch.ones_like(outputs_fake).cuda(self.gpu)
+        all_ones = torch.ones_like(outputs_fake)
         loss_G_GAN += nn.functional.binary_cross_entropy(outputs_fake, all_ones)
+    loss_G_GAN = loss_G_GAN * self.opts.lambda_adv_s
 
     # Classification loss
     loss_G_cls = self.cls_loss(pred_fake_cls, self.c_org) * self.opts.lambda_cls_G
 
     # Self-Reconstruction and Cross-cycle reconstruction losses
     loss_G_L1_self = torch.mean(torch.abs(self.input - torch.cat((self.fake_AA_encoded, self.fake_BB_encoded), 0))) * self.opts.lambda_rec
-    loss_G_L1_cc = torch.mean(torch.abs(self.input - torch.cat((self.fake_A_recon, self.fake_B_recon), 0))) * self.opts.lambda_rec
+    loss_G_L1_cc = torch.mean(torch.abs(self.input - torch.cat((self.fake_A_recon, self.fake_B_recon), 0))) * self.opts.lambda_cc
 
     # KL loss
-    loss_kl_zc = self._l2_regularize(self.z_content) * 0.01
+    loss_kl_zc = self._l2_regularize(self.z_content) * self.opts.lambda_content_l2
     kl_element = self.mu.pow(2).add_(self.logvar.exp()).mul_(-1).add_(1).add_(self.logvar)
-    loss_kl_za = torch.sum(kl_element).mul_(-0.5) * 0.01
+    loss_kl_za = torch.sum(kl_element).mul_(-0.5) * self.opts.lambda_KL
     
     # Scanner-Free Loss
     loss_sf = torch.mean( torch.abs( self.z_attr_A_free - self.z_attr_B_free ) ) * self.opts.lambda_sf
@@ -286,15 +295,16 @@ class DISARM(nn.Module):
     loss_G_GAN2 = 0
     for out_a in pred_fake:
         outputs_fake = nn.functional.sigmoid(out_a)
-        all_ones = torch.ones_like(outputs_fake).cuda(self.gpu)
+        all_ones = torch.ones_like(outputs_fake)
         loss_G_GAN2 += nn.functional.binary_cross_entropy(outputs_fake, all_ones)
+    loss_G_GAN2 = loss_G_GAN2 * self.opts.lambda_adv_s
 
     # Classification loss
     loss_G_cls2 = self.cls_loss(pred_fake_cls, self.c_org) * self.opts.lambda_cls_G
 
     # Latent regression loss
-    loss_z_L1_a = torch.mean(torch.abs(self.mu2_a - self.z_random)) * 8
-    loss_z_L1_b = torch.mean(torch.abs(self.mu2_b - self.z_random)) * 8
+    loss_z_L1_a = torch.mean(torch.abs(self.mu2_a - self.z_random)) * self.opts.lambda_lat
+    loss_z_L1_b = torch.mean(torch.abs(self.mu2_b - self.z_random)) * self.opts.lambda_lat
 
     loss_z_L1 = loss_z_L1_a + loss_z_L1_b + loss_G_GAN2 + loss_G_cls2
     loss_z_L1.backward()
@@ -399,7 +409,7 @@ class DISARM(nn.Module):
     return
 
   def resume(self, model_dir, train=True):
-    checkpoint = torch.load(model_dir)
+    checkpoint = torch.load(model_dir, map_location=self.device)
     # Weight
     if train:
         self.dis1.load_state_dict(checkpoint['dis1'])

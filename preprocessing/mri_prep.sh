@@ -1,92 +1,110 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# CHECK FOR THE CORRECT NUMBER OF INPUTS
+usage() {
+    echo "Usage: $0 <input_folder> <intermediate_folder> <final_output_folder> [--reference <0.5mm|0.7mm|0.8mm|1mm|2mm>] [--cost <normcorr|leastsq|corratio|mutualinfo|normmi>]"
+}
+
 if [ "$#" -lt 3 ]; then
-    echo "Usage: $0 <input_folder> <intermediate_folder> <final_output_folder>"
+    usage
     exit 1
 fi
 
-# GET INPUT FOLDER, INTERMEDIATE FOLDER, AND FINAL OUTPUT FOLDER
 input_folder="$1"
 intermediate_folder="$2"
 final_output_folder="$3"
+shift 3
 
-# PROMPT USER TO SELECT THE REFERENCE IMAGE
-echo "Select the reference image for registration:"
-echo "1) MNI152_T1_0.5mm.nii.gz"
-echo "2) MNI152_T1_0.7mm.nii.gz"
-echo "3) MNI152_T1_0.8mm.nii.gz"
-echo "4) MNI152_T1_1mm.nii.gz"
-echo "5) MNI152_T1_2mm.nii.gz"
+reference="1mm"
+cost_function="normcorr"
 
-read -p "Enter the number corresponding to your choice (1-5): " ref_choice
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --reference)
+            reference="$2"
+            shift 2
+            ;;
+        --cost)
+            cost_function="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
 
-# SET REFERENCE IMAGE BASED ON USER CHOICE
-case $ref_choice in
-    1) ref_image="$FSLDIR/data/standard/MNI152_T1_0.5mm.nii.gz" ;;
-    2) ref_image="$FSLDIR/data/standard/MNI152_T1_0.7mm.nii.gz" ;;
-    3) ref_image="$FSLDIR/data/standard/MNI152_T1_0.8mm.nii.gz" ;;
-    4) ref_image="$FSLDIR/data/standard/MNI152_T1_1mm.nii.gz" ;;
-    5) ref_image="$FSLDIR/data/standard/MNI152_T1_2mm.nii.gz" ;;
-    *) echo "Invalid choice. Exiting."; exit 1 ;;
-esac
+if [ -z "${FSLDIR:-}" ]; then
+    echo "FSLDIR is not set. Please load or configure FSL before running this script."
+    exit 1
+fi
 
-# PROMPT USER TO SELECT THE COST FUNCTION FOR FLIRT
-echo "Select the cost function for FLIRT registration:"
-echo "1) Normalised Correlation Ratio (intra-modal)"
-echo "2) Least Squares (intra-modal)"
-echo "3) Correlation Ratio (inter-modal)"
-echo "4) Mutual Information (inter-modal)"
-echo "5) Normalised Mutual Information (inter-modal)"
-
-read -p "Enter the number corresponding to your choice (1-5): " cost_choice
-
-# SET COST FUNCTION BASED ON USER CHOICE
-case $cost_choice in
-    1) cost_function="normcorr" ;;
-    2) cost_function="leastsq" ;;
-    3) cost_function="corratio" ;;
-    4) cost_function="mutualinfo" ;;
-    5) cost_function="normmi" ;;
-    *) echo "Invalid choice. Using default: Normalised Correlation Ratio -> normcorr"; cost_function="normcorr" ;;
-esac
-
-# CREATE INTERMEDIATE AND FINAL OUTPUT FOLDERS IF THEY DON'T EXIST
-[ ! -d "$intermediate_folder" ] && mkdir -p "$intermediate_folder"
-[ ! -d "$final_output_folder" ] && mkdir -p "$final_output_folder"
-
-# OPTIONS FOR FAST COMMAND
-common_options="-t 1 -n 3 -H 0.1 -I 4 -l 20.0 --nopve -B -b"
-
-# LOOP THROUGH ALL .nii.gz FILES IN THE INPUT FOLDER
-for image in "$input_folder"/*.nii.gz; do
-    # Check if the pattern matched any files
-    if [ ! -e "$image" ]; then
-        echo "No .nii.gz files found in the input folder."
+case "$reference" in
+    0.5mm) ref_image="$FSLDIR/data/standard/MNI152_T1_0.5mm.nii.gz" ;;
+    0.7mm) ref_image="$FSLDIR/data/standard/MNI152_T1_0.7mm.nii.gz" ;;
+    0.8mm) ref_image="$FSLDIR/data/standard/MNI152_T1_0.8mm.nii.gz" ;;
+    1mm)   ref_image="$FSLDIR/data/standard/MNI152_T1_1mm.nii.gz" ;;
+    2mm)   ref_image="$FSLDIR/data/standard/MNI152_T1_2mm.nii.gz" ;;
+    *)
+        echo "Unsupported reference resolution: $reference"
         exit 1
-    fi
+        ;;
+esac
 
-    # DEFINE OUTPUT PREFIXES FOR INTERMEDIATE RESULTS
-    image_basename=$(basename "${image%.*}")
-    output_prefix="$intermediate_folder/output_$image_basename"
-    restored_output="$intermediate_folder/output_${image_basename%.*}_restore"
-    reoriented_image="$intermediate_folder/reoriented_$image_basename"
+case "$cost_function" in
+    normcorr|leastsq|corratio|mutualinfo|normmi) ;;
+    *)
+        echo "Unsupported FLIRT cost function: $cost_function"
+        exit 1
+        ;;
+esac
 
-    # Print the image being processed
-    echo "Processing image: $image_basename"
+if [ ! -f "$ref_image" ]; then
+    echo "Reference image not found: $ref_image"
+    exit 1
+fi
 
-    # ORIENT THE IMAGE TO THE STANDARD ORIENTATION AND SAVE IN INTERMEDIATE FOLDER
+mkdir -p "$intermediate_folder" "$final_output_folder"
+
+# FAST settings used in the paper experiments.
+common_options=(-t 1 -n 3 -H 0.1 -I 4 -l 20.0 --nopve -B -b)
+
+shopt -s nullglob
+images=("$input_folder"/*.nii.gz)
+if [ "${#images[@]}" -eq 0 ]; then
+    echo "No .nii.gz files found in $input_folder"
+    exit 1
+fi
+
+for image in "${images[@]}"; do
+    filename=$(basename "$image")
+    image_basename="${filename%.nii.gz}"
+
+    output_prefix="$intermediate_folder/output_${image_basename}"
+    restored_output="${output_prefix}_restore.nii.gz"
+    reoriented_image="$intermediate_folder/reoriented_${image_basename}.nii.gz"
+    registered_image="$final_output_folder/registered_${image_basename}.nii.gz"
+
+    echo "Processing: $filename"
+
     fslreorient2std "$image" "$reoriented_image"
+    "$FSLDIR/bin/fast" "${common_options[@]}" -o "$output_prefix" "$reoriented_image"
 
-    # APPLY BIAS-FIELD CORRECTION WITH FAST
-    $FSLDIR/bin/fast $common_options -o "$output_prefix" "$reoriented_image"
-
-    # REGISTER IMAGE TO THE SELECTED REFERENCE IMAGE WITH FLIRT
-    $FSLDIR/bin/flirt -in "${restored_output}.nii.gz" -ref "$ref_image" -out "$final_output_folder/registered_$image_basename" -cost $cost_function -searchrx -90 90 -searchry -90 90 -searchrz -90 90 -dof 12 -interp trilinear
-    #$FSLDIR/bin/flirt -in "${restored_output}.nii.gz" -ref "$ref_image" -out "$final_output_folder/registered_$image_basename" -cost $cost_function -searchrx -180 180 -searchry -180 180 -searchrz -180 180 -dof 12 -interp trilinear
-    #$FSLDIR/bin/flirt -in "${restored_output}.nii.gz" -ref "$ref_image" -out "$final_output_folder/registered_$image_basename" -cost $cost_function -searchrx -90 90 -searchry -90 90 -searchrz -90 90 -dof 6 -interp trilinear
-    #$FSLDIR/bin/flirt -in "${restored_output}.nii.gz" -ref "$ref_image" -out "$final_output_folder/registered_$image_basename" -cost $cost_function -searchrx -180 180 -searchry -180 180 -searchrz -180 180 -dof 6 -interp trilinear
-    
-    echo "Image $image_basename processed and saved as registered_$image_basename"
+    "$FSLDIR/bin/flirt" \
+        -in "$restored_output" \
+        -ref "$ref_image" \
+        -out "$registered_image" \
+        -cost "$cost_function" \
+        -searchrx -90 90 \
+        -searchry -90 90 \
+        -searchrz -90 90 \
+        -dof 12 \
+        -interp trilinear
 
 done
