@@ -21,8 +21,10 @@ def main(opts):
     os.makedirs(opts.output_dir, exist_ok=True)
 
     # Architecture used by the released checkpoint
-    opts.num_domains = 5
-    opts.input_dim = 1
+    if opts.pre_trained_model:
+        opts.num_domains = 5
+        opts.input_dim = 1
+
     opts.dis_scale = 3
     opts.dis_norm = 'None'
     opts.dis_spectral_norm = False
@@ -78,6 +80,8 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, required=True, help='output folder')
     parser.add_argument('--resume', type=str, required=True, help='path to the trained checkpoint')
     parser.add_argument('--domain_idx', type=int, default=0, help='reference-domain index for a custom model')
+    parser.add_argument('--num_domains', type=int, default=5, help='number of scanner domains')
+    parser.add_argument('--input_dim', type=int, default=1, help='number of input channels')
     parser.add_argument('--gpu', type=int, default=0, help='CUDA device index')
     parser.add_argument(
         '--mode', type=str, default='scanner-free',

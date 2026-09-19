@@ -109,10 +109,6 @@ class data_multi_std(data.Dataset):
         self.custom_permute_and_select.reset()
         
 
-def collate_fn(batch):
-    dataset.reset_permutation()  # Reset the permutation index before processing each batch
-    return torch.utils.data.dataloader.default_collate(batch)
-
 
 class data_single_std(data.Dataset):
   def __init__(self, opts, domain):
@@ -212,23 +208,6 @@ transforms_dict = {
     tio.Lambda(lambda x: x): 0.3
 }
 
-class CustomPermuteAndSelect:
-    def __init__(self):
-        self.start_idx = None
-    
-    def __call__(self, x):
-        x = x.permute(0, 2, 3, 1)
-        first_dim_size = x.shape[1]
-
-        if self.start_idx is None:
-            self.start_idx = random.randint(0, first_dim_size - 26)
-        
-        x = x[:, self.start_idx:self.start_idx + 26, :, :]
-        return x
-
-    def reset(self):
-        self.start_idx = None
-
 class data_multi_aug(data.Dataset):
     def __init__(self, opts):
         self.dataroot = opts.dataroot
@@ -277,10 +256,6 @@ class data_multi_aug(data.Dataset):
     def reset_permutation(self):
         self.custom_permute_and_select.reset()
         
-
-def collate_fn(batch):
-    dataset.reset_permutation()  # Reset the permutation index before processing each batch
-    return torch.utils.data.dataloader.default_collate(batch)
 
 
 class data_single_aug(data.Dataset):

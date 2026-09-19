@@ -89,7 +89,7 @@ The reference image is `example_ref_image/ref_gyroscan.nii.gz`. In the released 
 
 ### Model trained on another dataset
 
-For a separately trained model, omit `--pre_trained_model`. Reference-domain inference also requires the training-data root and the corresponding domain index:
+For a separately trained model, omit `--pre_trained_model` and set `--num_domains` to the number of domains used during training. Reference-domain inference also requires the training-data root and the corresponding domain index:
 
 ```bash
 python -u code/inference.py \
@@ -97,6 +97,7 @@ python -u code/inference.py \
   --output_dir /path/to/output \
   --resume /path/to/model.pth \
   --gpu 0 \
+  --num_domains 3 \
   --mode reference \
   --dataroot /path/to/training_data \
   --domain_idx 2
