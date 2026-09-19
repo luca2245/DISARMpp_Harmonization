@@ -359,18 +359,32 @@ def load_nifti_images_from_folder(folder_path):
     
     return nifti_images, filenames
 
-# Function to save the preprocessed images with a prefix to the same filenames
-def save_preprocessed_images(folder_path, nifti_images, filenames, prefix="harm_"):
+# Save harmonized volumes in the same voxel space as their respective inputs.
+def save_preprocessed_images(folder_path, nifti_images, filenames, source_dir, prefix="harm_"):
+    if len(nifti_images) != len(filenames):
+        raise ValueError("The number of output volumes and input filenames must match.")
+
+    os.makedirs(folder_path, exist_ok=True)
+
     for img_array, filename in zip(nifti_images, filenames):
-        # Create the new filename with the added prefix
-        new_filename = prefix + filename
-        
-        # Create the full path for the new file
-        new_file_path = os.path.join(folder_path, new_filename)
-        
-        # Convert the numpy array back to a NIfTI image
-        new_img = nib.Nifti1Image(img_array, affine=np.eye(4))  # Use identity matrix for affine
+        source_img = nib.load(os.path.join(source_dir, filename))
+        img_array = np.asarray(img_array, dtype=np.float32)
+
+        if img_array.shape != source_img.shape:
+            raise ValueError(
+                f"Shape mismatch for {filename}: output {img_array.shape}, "
+                f"input {source_img.shape}. Cannot reuse the input geometry."
+            )
+
+        # Copy spatial metadata, but store the harmonized intensities as float32
+        # without applying the input image's original intensity scaling.
+        header = source_img.header.copy()
+        header.set_data_dtype(np.float32)
+        header.set_slope_inter(1.0, 0.0)
+
+        new_img = nib.Nifti1Image(img_array, affine=source_img.affine, header=header)
+        new_file_path = os.path.join(folder_path, prefix + filename)
         nib.save(new_img, new_file_path)
-        
+
         print(f"Saved preprocessed image: {new_file_path}")
 

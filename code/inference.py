@@ -42,7 +42,13 @@ def main(opts):
                 print('Harmonizing to reference...')
                 har_data = transfer_img_list_to_reference(img_list, opts.domain_idx, opts, model)
             
-        save_preprocessed_images(opts.output_dir, [nib_tensor2img(har_data[i]) for i in range(len(har_data))], filenames_list, prefix="harm_")
+        save_preprocessed_images(
+            opts.output_dir,
+            [nib_tensor2img(har_data[i]) for i in range(len(har_data))],
+            filenames_list,
+            source_dir=opts.input_dir,
+            prefix="harm_",
+        )
    
     inference(opts)
 
