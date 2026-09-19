@@ -134,7 +134,7 @@ def get_z_random(batchSize, nz, random_type='gauss'):
     return z
 
 def transfer_to_scannerfree(source_img, opts, model):
-        z_random = get_z_random(source_img.size(0), 8, 'gauss').cuda().float()
+        z_random = get_z_random(source_img.size(0), 16, 'gauss').cuda().float()
         source_img_ = source_img.cuda().float()
         with torch.no_grad():
             output_test = model.test_scannerfree_transfer(source_img_, z_random)
