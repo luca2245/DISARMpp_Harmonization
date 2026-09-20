@@ -36,6 +36,10 @@ The `trainC` folder contains the Achieva dStream scans from both ADNI3 and PPMI.
 
 Training volumes are stored as 3D NumPy arrays. They are rescaled to `[-1, 1]` and a 26-slice subvolume is selected along the first spatial dimension used by the model.
 
+For each training sample, a scanner domain is first selected uniformly from the five training domains, and an image is then sampled uniformly from that domain. Therefore, the two samples in a mini-batch are not required to originate from different scanner domains.
+
+The released data loader preserves the subvolume-sampling behavior used for the original training. With the paper configuration (`num_workers = 8`), each data-loader worker samples a starting index for the 26-slice subvolume on first use and reuses that index for the samples assigned to that worker during the current epoch. The workers are recreated between epochs, resulting in newly sampled subvolume positions.
+
 The augmentation used during training is TorchIO `RandomElasticDeformation` with:
 
 - `num_control_points = 10`
@@ -72,7 +76,7 @@ Adam is used for all networks with:
 - gradient clipping: **1.0**
 - `d_iter = 2`
 
-Learning rates:
+The learning rates remained fixed throughout the training run used to obtain the released checkpoint:
 
 | Component | Learning rate |
 |---|---:|
@@ -82,7 +86,11 @@ Learning rates:
 | Scanner discriminator(s) | 1e-4 |
 | Anatomy discriminator | 4e-5 |
 
-The checkpoint used for the paper was obtained after **69,000 training iterations**.
+Optimization follows an alternating schedule. With `d_iter = 2`, mini-batches used exclusively to update the anatomy discriminator are interleaved with the main training cycles. During a main cycle, the two scanner discriminators are first updated independently, followed by an anatomy-encoder/scanner-encoder/generator update using the encoded-scanner branch and a second anatomy-encoder/generator update using the randomly sampled scanner-latent branch and the latent-regression loss.
+
+The checkpoint used for the paper was obtained after **69,000 main training update cycles**. The `total_it` counter is incremented only after a main training cycle and therefore does not include the interleaved mini-batches used exclusively to update the anatomy discriminator.
+
+No fixed global random seed was enforced during training. The exact checkpoint used for the experiments reported in the paper is released with this repository.
 
 ## Scanner-free inference
 

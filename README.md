@@ -133,7 +133,7 @@ The order of the `--domain` arguments defines the domain labels. For the release
 
 ### Run training
 
-The following settings reproduce the training configuration reported in the paper up to the iteration used for the released checkpoint:
+The following settings reproduce the training configuration reported in the paper up to the main training update cycle used for the released checkpoint:
 
 ```bash
 python -u code/train.py \
@@ -151,7 +151,7 @@ python -u code/train.py \
   --isDcontent
 ```
 
-The loss weights and optimizer defaults in `code/train.py` match the paper configuration. They are listed together in `PAPER_CONFIGURATION.md`.
+The loss weights and optimizer defaults in `code/train.py` match the paper configuration. They are listed together in `PAPER_CONFIGURATION.md`. The `--max_iter` argument counts main training update cycles (`total_it`) and does not include the interleaved mini-batches used exclusively to update the anatomy discriminator. The learning rates remained fixed throughout the training run used to obtain the released checkpoint.
 
 ## Acknowledgments
 
