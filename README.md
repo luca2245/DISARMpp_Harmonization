@@ -79,9 +79,7 @@ At inference, DISARM++ processes 3D windows of 26 consecutive slices with stride
 
 The final volume is reconstructed by voxel-wise uniform averaging of all predictions covering the same spatial location. Thus, sufficiently interior slices receive predictions from up to 26 overlapping windows, while fewer predictions contribute near the volume boundaries.
 
-![Sliding-window inference and reconstruction](figures/sliding_window_inference.png)
-
-[PDF version of the schematic](figures/sliding_window_inference.pdf)
+![Sliding-window inference and reconstruction](figures/sliding-window-schematic.jpg)
 
 ### Transfer to Gyroscan Intera
 
