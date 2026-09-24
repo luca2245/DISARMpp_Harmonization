@@ -73,6 +73,14 @@ With `--pre_trained_model`, the fixed 16-dimensional latent vector used in the p
 
 Without `--pre_trained_model`, scanner-free inference samples a new Gaussian latent vector when the program starts.
 
+### Sliding-window reconstruction
+
+At inference, DISARM++ processes 3D windows of 26 consecutive slices with stride 1, resulting in a 25-slice overlap between consecutive windows. Each window is independently harmonized using the same scanner-free latent configuration.
+
+The final volume is reconstructed by voxel-wise uniform averaging of all predictions covering the same spatial location. Thus, sufficiently interior slices receive predictions from up to 26 overlapping windows, while fewer predictions contribute near the volume boundaries.
+
+[Sliding-window inference and reconstruction schematic (PDF)](figures/sliding_window_inference.pdf)
+
 ### Transfer to Gyroscan Intera
 
 ```bash
