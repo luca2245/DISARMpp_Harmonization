@@ -122,3 +122,7 @@ The paper preprocessing is implemented in `preprocessing/mri_prep.sh` with the f
 - interpolation: `trilinear`.
 
 Package versions are listed in `requirements.txt`.
+
+## Hardware and training time
+
+Training was performed on a single NVIDIA A100 80GB PCIe GPU. The checkpoint used for all experiments corresponds to 69,000 main training update cycles. Training required approximately 78 hours.
